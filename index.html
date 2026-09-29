@@ -306,6 +306,8 @@ const pad=n=>String(n).padStart(2,"0");
 const todayStr=()=>{const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())};
 const ymOf=s=>String(s||"").slice(0,7);
 const nowYM=()=>ymOf(todayStr());
+const mulaiYM=()=>{const m=ymOf((D&&D.atur&&D.atur.MULAI)||"");return /^\d{4}-\d{2}$/.test(m)?m:""};
+const aktifYM=()=>{const m=mulaiYM(),n=nowYM();return m&&m>n?m:n};
 const addM=(ym,k)=>{let[y,m]=ym.split("-").map(Number);m+=k;while(m>12){m-=12;y++}while(m<1){m+=12;y--}return y+"-"+pad(m)};
 const dim=ym=>{const[y,m]=ym.split("-").map(Number);return new Date(y,m,0).getDate()};
 const blnNama=ym=>{const[y,m]=ym.split("-").map(Number);return BLN[m-1]+" "+y};
@@ -367,7 +369,7 @@ function setSync(s,txt){
 
 function addRows(rows){
   rows=rows.map(r=>({id:uid(),waktu:new Date().toISOString(),tanggal:todayStr(),bulan:"",jenis:"KELUAR",pos:"",nominal:0,
-    dompet:"",ke:"",barang:"",qty:"",ket:"",ref:"",hapus:0,...r})).map(r=>({...r,bulan:r.bulan||ymOf(r.tanggal)}));
+    dompet:"",ke:"",barang:"",qty:"",ket:"",ref:"",hapus:0,...r})).map(r=>{const m=mulaiYM();let b=r.bulan||ymOf(r.tanggal);if(m&&b<m)b=m;return{...r,bulan:b}});
   if(DEMO){D.trx.push(...rows);render();return}
   Q.push(...rows);saveQ();render();refresh();
 }
@@ -407,7 +409,7 @@ const dompetList=()=>D.dompet.slice().sort((a,b)=>N(a.urut)-N(b.urut)).map(d=>d.
 const setoranDompet=()=>D.atur.DOMPET_SETORAN||"Jago";
 
 function model(){
-  const T=trxAll(), cur=nowYM();
+  const T=trxAll(), cur=aktifYM();
   let start=ymOf(D.atur.MULAI||cur); if(!/^\d{4}-\d{2}$/.test(start)||start>cur) start=cur;
   const months=[];for(let m=start;m<=cur;m=addM(m,1))months.push(m);
   const spent={},tambah={};let alok=0;
@@ -442,10 +444,10 @@ function model(){
 /* skema harian: jatah hari ini = sisa anggaran sebelum hari ini ÷ sisa hari (termasuk hari ini) */
 function harian(mm,p,ym){
   const r=mm.M[p.id][ym]||{angg:paguIn(p,ym),pakai:0};
-  const td=todayStr(),D0=+td.slice(8,10),dm=dim(ym),sisaHari=dm-D0+1;
+  const td=todayStr(),blm=ym>ymOf(td),D0=blm?1:+td.slice(8,10),dm=dim(ym),sisaHari=dm-D0+1;
   const L=mm.T.filter(t=>t.jenis==="KELUAR"&&t.pos===p.id&&t.bulan===ym);
-  const before=L.filter(t=>t.tanggal<td).reduce((a,t)=>a+t.nominal,0);
-  const today=L.filter(t=>t.tanggal===td).reduce((a,t)=>a+t.nominal,0);
+  const before=blm?L.reduce((a,t)=>a+t.nominal,0):L.filter(t=>t.tanggal<td).reduce((a,t)=>a+t.nominal,0);
+  const today=blm?0:L.filter(t=>t.tanggal===td).reduce((a,t)=>a+t.nominal,0);
   const jatah=(r.angg-before)/sisaHari;
   const besok=sisaHari>1?(r.angg-before-today)/(sisaHari-1):0;
   return {r,jatah,today,sisa:jatah-today,besok,sisaHari,normal:r.angg/dm};
@@ -455,7 +457,7 @@ function mingguan(mm,p,ym){
   const r=mm.M[p.id][ym]||{angg:N(p.pagu),pakai:0,bawa:0};
   const sp=[0,0,0,0,0];
   mm.T.filter(t=>t.jenis==="KELUAR"&&t.pos===p.id&&t.bulan===ym).forEach(t=>sp[wOf(t.tanggal,ym)]+=t.nominal);
-  const w=ym===nowYM()?wOf(todayStr(),ym):4;
+  const tm=nowYM(),w=ym===tm?wOf(todayStr(),ym):ym>tm?1:4;
   const jt=[0];let before=0;
   for(let k=1;k<=4;k++){jt[k]=(r.angg-before)/(5-k);if(k<=w)before+=sp[k]}
   for(let k=w+1;k<=4;k++)jt[k]=jt[w];     // perkiraan: kalau minggu ini pas jatah, minggu depan sama
@@ -525,8 +527,8 @@ function go(p){
 }
 function render(){
   if(!D)return;
-  const cur=nowYM();
-  document.getElementById("ew").textContent=blnNama(cur);
+  const cur=aktifYM();
+  document.getElementById("ew").textContent=blnNama(cur)+(cur>nowYM()?" · mulai 1 "+BLS[+cur.slice(5)-1]:"");
   document.getElementById("demo").hidden=!DEMO;
   setSync(SYNC.state);
   const mm=model();
@@ -539,7 +541,7 @@ function render(){
 /* ============================ BERANDA ============================ */
 function rBeranda(mm){
   const cur=mm.cur,T=mm.T,P=posAktif();let h="";
-  const hariKe=+todayStr().slice(8,10),pctHari=hariKe/dim(cur)*100;
+  const blm=cur>nowYM(),hariKe=blm?0:+todayStr().slice(8,10),pctHari=hariKe/dim(cur)*100;
 
   /* 1. total seluruh uang + dompet */
   const total=Object.values(mm.S).reduce((a,v)=>a+v,0);
@@ -585,7 +587,7 @@ function rBeranda(mm){
   /* 3. pos lain — harian bergulir */
   const pagu=P.filter(p=>p.jenis==="PAGU");
   if(pagu.length){
-    h+=`<section><h2>Jatah harian<span class="r">hari ${hariKe}/${dim(cur)}</span></h2><div class="card">`;
+    h+=`<section><h2>Jatah harian<span class="r">${blm?"mulai 1 "+BLS[+cur.slice(5)-1]:"hari "+hariKe+"/"+dim(cur)}</span></h2><div class="card">`;
     pagu.forEach(p=>{
       const g=harian(mm,p,cur),r=g.r,pc=r.angg?r.pakai/r.angg*100:0,sb=r.angg-r.pakai;
       const cls=pc>100?"bad":pc>pctHari+15?"warn":"";
@@ -709,13 +711,13 @@ function rBulanan(mm){
 /* ---------- tambah cicilan baru ---------- */
 let CC={};
 function bukaCicilan(){
-  const dl=dompetList();CC={dompet:dl[0],mulai:nowYM(),dana1:"SETORAN"};
+  const dl=dompetList();CC={dompet:dl[0],mulai:aktifYM(),dana1:"SETORAN"};
   openSheet(`<h3>Cicilan baru</h3><div class="sub">Masuk ke daftar tagihan tiap bulan sampai lunas.</div>
     <div class="fld"><label for="ccnama">Nama cicilan</label><input id="ccnama" class="txt" placeholder="misal: Cicilan HP, Kredivo"></div>
     <div class="row2"><div class="fld"><label for="ccnom">Per bulan</label><div class="nom" style="padding:10px 12px"><span style="font-size:14px">Rp</span><input id="ccnom" inputmode="numeric" placeholder="0" oninput="fmtNom(this);ccInfo()" style="font-size:20px"></div></div>
       <div class="fld"><label for="cctenor">Berapa bulan</label><input id="cctenor" class="txt" inputmode="numeric" placeholder="misal 6" oninput="ccInfo()"></div></div>
     <div class="fld"><span class="fl">Dibayar dari</span><div class="chips" id="ccdp">${dl.map((d,i)=>`<button class="chip ${i?"":"on"}" onclick="CC.dompet='${d}';ccPick('ccdp',this)">${esc(d)}</button>`).join("")}</div></div>
-    <div class="fld"><span class="fl">Mulai</span><div class="chips" id="ccm"><button class="chip on" onclick="CC.mulai=nowYM();ccPick('ccm',this);ccInfo()">${blnNama(nowYM())}</button><button class="chip" onclick="CC.mulai=addM(nowYM(),1);ccPick('ccm',this);ccInfo()">${blnNama(addM(nowYM(),1))}</button></div></div>
+    <div class="fld"><span class="fl">Mulai</span><div class="chips" id="ccm"><button class="chip on" onclick="CC.mulai=aktifYM();ccPick('ccm',this);ccInfo()">${blnNama(aktifYM())}</button><button class="chip" onclick="CC.mulai=addM(aktifYM(),1);ccPick('ccm',this);ccInfo()">${blnNama(addM(aktifYM(),1))}</button></div></div>
     <div class="fld" id="ccdanaw"><span class="fl">Uang untuk bulan ini dari</span><div class="chips" id="ccd">
       <button class="chip on" onclick="CC.dana1='SETORAN';ccPick('ccd',this);ccInfo()">Tambahan setoran suami</button>
       <button class="chip" onclick="CC.dana1='CADANGAN';ccPick('ccd',this);ccInfo()">Cadangan</button>
@@ -727,18 +729,18 @@ function bukaCicilan(){
 function ccPick(id,el){document.querySelectorAll("#"+id+" .chip").forEach(c=>c.classList.remove("on"));el.classList.add("on")}
 function ccInfo(){
   const v=digits((document.getElementById("ccnom")||{}).value||""),n=N((document.getElementById("cctenor")||{}).value);
-  const w=document.getElementById("ccdanaw");if(w)w.hidden=CC.mulai!==nowYM();
-  const base=posAktif().reduce((a,p)=>a+paguIn(p,addM(CC.mulai,CC.mulai===nowYM()?1:0)),0);
-  let t=`Setoran bulanan naik jadi <b>${rp(base+v)}</b> mulai ${blnNama(CC.mulai===nowYM()?addM(CC.mulai,1):CC.mulai)}.`;
+  const w=document.getElementById("ccdanaw");if(w)w.hidden=CC.mulai!==aktifYM();
+  const base=posAktif().reduce((a,p)=>a+paguIn(p,addM(CC.mulai,CC.mulai===aktifYM()?1:0)),0);
+  let t=`Setoran bulanan naik jadi <b>${rp(base+v)}</b> mulai ${blnNama(CC.mulai===aktifYM()?addM(CC.mulai,1):CC.mulai)}.`;
   if(n)t+=` Lunas ${blnNama(addM(CC.mulai,n-1))}.`;
-  if(CC.mulai===nowYM())t+=CC.dana1==="SETORAN"?` Bulan ini muncul centang <b>Tambahan setoran</b> ${kj(v)} di Pembagian awal bulan.`
+  if(CC.mulai===aktifYM())t+=CC.dana1==="SETORAN"?` Bulan ini muncul centang <b>Tambahan setoran</b> ${kj(v)} di Pembagian awal bulan.`
     :CC.dana1==="CADANGAN"?` Bulan ini dibayar dari Cadangan (saldo Cadangan berkurang ${kj(v)}).`:` Bulan ini diambil dari Uang sisa ${kj(v)}.`;
   const el=document.getElementById("ccinfo");if(el)el.innerHTML=`<span>${t}</span>`;
 }
 function simpanCicilan(){
   const nama=document.getElementById("ccnama").value.trim(),v=digits(document.getElementById("ccnom").value),n=N(document.getElementById("cctenor").value);
   if(!nama)return toast("Isi nama cicilan");if(!v)return toast("Isi nominal per bulan");if(!n)return toast("Isi berapa bulan");
-  const dana1=CC.mulai===nowYM()?CC.dana1:"";
+  const dana1=CC.mulai===aktifYM()?CC.dana1:"";
   if(dana1==="SISA"&&model().pot<v)return toast("Uang sisa tidak cukup");
   const id=uid(),rows=[{id,jenis:"CICILAN",ket:nama,nominal:v,dompet:CC.dompet,qty:n,bulan:CC.mulai,ref:dana1}];
   if(dana1==="SISA")rows.push({jenis:"ALOKASI",pos:"c_"+id,nominal:v,ket:"Uang sisa untuk "+nama,bulan:CC.mulai});
@@ -754,7 +756,7 @@ function bukaCk(kind,ref){
       <button class="btn danger" style="margin-top:8px" onclick="delIds(${esc(JSON.stringify(d.map(t=>t.id)))});closeSheet();toast('Dibatalkan')">Batalkan centang</button>`);
     return;
   }
-  const tglDef=ym===nowYM()?todayStr():ym+"-01";
+  const tglDef=ym>=nowYM()?todayStr():ym+"-01";
   openSheet(`<h3>${esc(x.t)}</h3><div class="sub">${esc(x.s)}</div>
     ${x.edit?`<div class="fld"><label for="cknom">Nominal dibayar</label><div class="nom"><span>Rp</span><input id="cknom" inputmode="numeric" value="${num(x.v)}" oninput="fmtNom(this)"></div>
       <div class="hint">Ubah kalau tagihannya berbeda. Selisih dari anggaran masuk ke uang sisa.</div></div>`
@@ -780,7 +782,7 @@ function bukaAlokasi(){
 }
 function simpanAlokasi(){
   const v=digits(document.getElementById("alnom").value);if(!v)return toast("Isi nominal");
-  addRows([{jenis:"ALOKASI",pos:window._al,nominal:v,ket:"Dari uang sisa",bulan:nowYM()}]);closeSheet();toast("Dibagikan ✓");
+  addRows([{jenis:"ALOKASI",pos:window._al,nominal:v,ket:"Dari uang sisa",bulan:aktifYM()}]);closeSheet();toast("Dibagikan ✓");
 }
 function bukaCocok(d){
   const mm=model(),v=mm.S[d]||0;
@@ -800,11 +802,12 @@ function simpanCocok(d,v){
 let RM=null,RF="";
 function rRiwayat(mm){
   if(!RM)RM=mm.cur;
+  const maxM=mm.T.reduce((a,t)=>t.bulan>a?t.bulan:a,mm.cur);
   const ym=RM,L=mm.T.filter(t=>t.bulan===ym&&(!RF||t.pos===RF||(RF==="_d"&&!t.pos))).sort((a,b)=>a.tanggal===b.tanggal?(a.waktu<b.waktu?1:-1):(a.tanggal<b.tanggal?1:-1));
   const all=mm.T.filter(t=>t.bulan===ym);
   const kel=all.filter(t=>t.jenis==="KELUAR").reduce((a,t)=>a+t.nominal,0),mas=all.filter(t=>t.jenis==="MASUK").reduce((a,t)=>a+t.nominal,0);
   const P=posAktif().filter(p=>all.some(t=>t.pos===p.id));
-  let h=`<div class="mnav"><button onclick="RM=addM(RM,-1);render()">‹</button><b>${blnNama(ym)}</b><button onclick="RM=addM(RM,1);render()" ${ym>=mm.cur?"disabled":""}>›</button></div>
+  let h=`<div class="mnav"><button onclick="RM=addM(RM,-1);render()">‹</button><b>${blnNama(ym)}</b><button onclick="RM=addM(RM,1);render()" ${ym>=maxM?"disabled":""}>›</button></div>
     <div class="sumr"><div class="card dp"><div class="n">Masuk</div><div class="v" style="color:var(--ok)">${rp(mas)}</div></div><div class="card dp"><div class="n">Keluar</div><div class="v">${rp(kel)}</div></div></div>
     <div class="fchips"><button class="chip sm ${RF?"":"on"}" onclick="RF='';render()">Semua</button>${P.map(p=>`<button class="chip sm ${RF===p.id?"on":""}" onclick="RF='${p.id}';render()">${esc(p.nama)}</button>`).join("")}<button class="chip sm ${RF==="_d"?"on":""}" onclick="RF='_d';render()">Dompet</button></div>
     <section style="margin-top:12px"><div class="card">`;
