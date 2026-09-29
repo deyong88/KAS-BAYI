@@ -222,6 +222,33 @@ nav button.plus.on .pl{background:var(--ink)}
   padding:10px 16px;border-radius:20px;font-size:13.5px;font-weight:500;opacity:0;transition:all .25s;z-index:50;pointer-events:none;white-space:nowrap}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 .demo-banner{background:var(--acc-soft);color:#72461F;border:1px solid #EBD3B8;border-radius:6px;font-size:12.5px;padding:9px 12px;margin-top:4px}
+
+/* total uang + dompet */
+.dlist{margin-top:14px;border-top:1px solid #3E504A;padding-top:6px}
+.drow{display:grid;grid-template-columns:86px 1fr auto;gap:10px;align-items:center;padding:7px 0}
+.drow .dn{font-size:13px;color:#C9D4CE}
+.drow .db{height:5px;background:#3E504A;border-radius:3px;overflow:hidden}
+.drow .db i{display:block;height:100%;background:#E0B585;border-radius:3px}
+.drow .dv{font-family:var(--mono);font-size:13.5px;font-weight:600;text-align:right}
+.drow .dv.neg{color:#F3A7B0}
+/* makan (kartu terang) */
+.mk{padding:14px}
+.mk .lbl{font-size:12.5px;color:var(--ink2)}
+.mk .bigl{font-family:var(--mono);font-size:28px;font-weight:600;letter-spacing:-.02em;margin-top:2px}
+.mk .bigl.neg{color:var(--bad)}
+.mk .subl{font-family:var(--mono);font-size:11.5px;color:var(--ink2);margin-top:4px}
+.lbar{height:6px;background:#EEE9E0;border-radius:3px;margin-top:10px;overflow:hidden}
+.lbar i{display:block;height:100%;background:var(--acc);border-radius:3px}
+.lbar i.bad{background:var(--bad)}
+.mk .wk{background:#F4F0E8}
+.mk .wk.now{background:var(--ink);color:#F4F1EA}
+.mk .wk.over .s{color:var(--bad)} .mk .wk.now.over .s{color:#F3A7B0}
+.mk .foot{border-top:1px solid var(--line);margin-top:12px;padding-top:10px;font-size:12.5px;color:var(--ink2);display:flex;justify-content:space-between;align-items:flex-end;gap:10px}
+.mk .foot b{font-family:var(--mono);color:var(--ink);font-size:14px}
+.mk .foot small{font-size:11px}
+.pos .sisa small{font-family:var(--body);font-weight:400;font-size:11px;color:var(--ink2)}
+.negt{color:var(--bad)}
+.pos .meta+.pbar{margin-top:8px}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -358,8 +385,24 @@ function trxAll(){
 }
 
 /* ============================ model hitung ============================ */
-const posAktif=()=>D.pos.filter(p=>String(p.aktif||"YA").toUpperCase()!=="TIDAK").sort((a,b)=>N(a.urut)-N(b.urut));
-const posById=id=>D.pos.find(p=>p.id===id);
+/* pos dari Sheet + cicilan baru (disimpan sebagai baris jenis CICILAN di TRANSAKSI) */
+function allPos(){
+  const base=D.pos.map(p=>({...p}));
+  const cic=trxAll().filter(t=>t.jenis==="CICILAN").map((t,i)=>({id:"c_"+t.id,nama:t.ket||"Cicilan",pagu:t.nominal,jenis:"TAGIHAN",dompet:t.dompet,grup:"",
+    urut:200+i,aktif:"YA",mulai:t.bulan,tenor:t.qty||0,dana1:t.ref||"",cicilan:1,_src:t.id}));
+  return [...base,...cic];
+}
+const posAktif=()=>allPos().filter(p=>String(p.aktif||"YA").toUpperCase()!=="TIDAK").sort((a,b)=>N(a.urut)-N(b.urut));
+const posById=id=>allPos().find(p=>p.id===id);
+const akhirCic=p=>p.tenor?addM(p.mulai,p.tenor-1):"";
+/* pagu yang berlaku untuk pos p di bulan m (0 = tidak aktif / bulan pertama dibiayai dari tempat lain) */
+function paguIn(p,m){
+  if(p.mulai&&m<p.mulai)return 0;
+  if(p.tenor&&m>akhirCic(p))return 0;
+  if(p.cicilan&&m===p.mulai&&(p.dana1==="CADANGAN"||p.dana1==="SISA"))return 0;
+  return N(p.pagu);
+}
+const aktifDi=(p,m)=>!(p.mulai&&m<p.mulai)&&!(p.tenor&&m>akhirCic(p));
 const dompetList=()=>D.dompet.slice().sort((a,b)=>N(a.urut)-N(b.urut)).map(d=>d.nama);
 const setoranDompet=()=>D.atur.DOMPET_SETORAN||"Jago";
 
@@ -377,7 +420,7 @@ function model(){
   for(const p of posAktif()){
     M[p.id]={};let carry=0,sv=0;
     for(const m of months){
-      const pagu=N(p.pagu),tb=tambah[m+"|"+p.id]||0,pk=spent[m+"|"+p.id]||0;
+      const pagu=paguIn(p,m),tb=tambah[m+"|"+p.id]||0,pk=spent[m+"|"+p.id]||0;
       if(p.jenis==="MINGGUAN"){const angg=pagu+carry+tb;M[p.id][m]={angg,pakai:pk,bawa:carry,tambah:tb};carry=angg-pk}
       else if(p.jenis==="SIMPAN"){sv+=pagu+tb-pk;M[p.id][m]={angg:pagu+tb,pakai:pk}}
       else{const angg=pagu+tb;M[p.id][m]={angg,pakai:pk,tambah:tb};if(m<cur)pot+=angg-pk}
@@ -394,6 +437,18 @@ function model(){
     else if(t.jenis==="SESUAI")S[t.dompet]=(S[t.dompet]||0)+v;
   }
   return {T,cur,start,months,M,pot,simpan,S};
+}
+
+/* skema harian: jatah hari ini = sisa anggaran sebelum hari ini ÷ sisa hari (termasuk hari ini) */
+function harian(mm,p,ym){
+  const r=mm.M[p.id][ym]||{angg:paguIn(p,ym),pakai:0};
+  const td=todayStr(),D0=+td.slice(8,10),dm=dim(ym),sisaHari=dm-D0+1;
+  const L=mm.T.filter(t=>t.jenis==="KELUAR"&&t.pos===p.id&&t.bulan===ym);
+  const before=L.filter(t=>t.tanggal<td).reduce((a,t)=>a+t.nominal,0);
+  const today=L.filter(t=>t.tanggal===td).reduce((a,t)=>a+t.nominal,0);
+  const jatah=(r.angg-before)/sisaHari;
+  const besok=sisaHari>1?(r.angg-before-today)/(sisaHari-1):0;
+  return {r,jatah,today,sisa:jatah-today,besok,sisaHari,normal:r.angg/dm};
 }
 
 function mingguan(mm,p,ym){
@@ -426,24 +481,37 @@ function statBarang(b,T){
 /* checklist bulanan */
 function daftarBagi(ym){
   const A=setoranDompet(),P=posAktif();
-  const total=P.reduce((a,p)=>a+N(p.pagu),0);
+  const tambahan=P.filter(p=>p.cicilan&&p.mulai===ym&&p.dana1==="SETORAN");
+  const total=P.reduce((a,p)=>a+paguIn(p,ym),0)-tambahan.reduce((a,p)=>a+N(p.pagu),0);
   const it=[{ref:"SETORAN",t:"Terima setoran dari suami",s:"masuk ke "+A,v:total,
     rows:[{jenis:"MASUK",dompet:A,nominal:total,ket:"Setoran bulanan"}]}];
+  tambahan.forEach(p=>it.push({ref:"SETOR:"+p.id,t:"Tambahan setoran: "+p.nama,s:"cicilan baru bulan ini · masuk ke "+A,v:N(p.pagu),
+    rows:[{jenis:"MASUK",dompet:A,nominal:N(p.pagu),ket:"Tambahan setoran untuk "+p.nama}]}));
   dompetList().filter(d=>d!==A).forEach(d=>{
-    const ps=P.filter(p=>p.dompet===d);const v=ps.reduce((a,p)=>a+N(p.pagu),0);if(!v)return;
+    const ps=P.filter(p=>p.dompet===d&&paguIn(p,ym)>0&&!(p.cicilan&&p.mulai===ym));const v=ps.reduce((a,p)=>a+paguIn(p,ym),0);if(!v)return;
     it.push({ref:"BAGI:"+d,t:d==="Cash"?"Tarik tunai":"Pindah ke "+d,s:ps.map(p=>p.nama).join(" · "),v,
       rows:[{jenis:"PINDAH",dompet:A,ke:d,nominal:v,ket:d==="Cash"?"Tarik tunai":"Pembagian ke "+d}]});
   });
   return it;
 }
 function daftarTagihan(ym){
-  const P=posAktif().filter(p=>p.jenis==="TAGIHAN");const it=[],grp={};
+  const P=posAktif().filter(p=>p.jenis==="TAGIHAN"&&aktifDi(p,ym));const it=[],grp={};
   P.forEach(p=>{
     if(p.grup){if(!grp[p.grup]){grp[p.grup]={ref:"GRUP:"+p.grup,t:p.grup,ps:[],grup:1};it.push(grp[p.grup])}grp[p.grup].ps.push(p)}
     else it.push({ref:"TAG:"+p.id,t:p.nama,ps:[p],edit:1});
   });
-  it.forEach(x=>{x.v=x.ps.reduce((a,p)=>a+N(p.pagu),0);x.s=x.grup?x.ps.map(p=>p.nama).join(" · "):"dari "+x.ps[0].dompet;
-    x.rows=x.ps.map(p=>({jenis:"KELUAR",pos:p.id,dompet:p.dompet,nominal:N(p.pagu),ket:x.grup?x.t:""}))});
+  it.forEach(x=>{
+    x.v=x.ps.reduce((a,p)=>a+N(p.pagu),0);
+    const p0=x.ps[0];
+    if(x.grup)x.s=x.ps.map(p=>p.nama).join(" · ");
+    else if(p0.cicilan){
+      const k=(()=>{let n=1;for(let m=p0.mulai;m<ym;m=addM(m,1))n++;return n})();
+      x.s=`cicilan ke-${k}${p0.tenor?" dari "+p0.tenor:""} · dari ${p0.dompet}`;x.cic=1;
+    } else x.s="dari "+p0.dompet;
+    x.rows=x.ps.map(p=>{
+      const dariCad=p.cicilan&&ym===p.mulai&&p.dana1==="CADANGAN";
+      return {jenis:"KELUAR",pos:dariCad?"cadangan":p.id,dompet:p.dompet,nominal:N(p.pagu),ket:x.grup?x.t:(dariCad?p.nama+" (dari cadangan)":"")}});
+  });
   return it;
 }
 const doneRows=(T,ref,ym)=>T.filter(t=>t.ref===ref&&t.bulan===ym);
@@ -473,25 +541,15 @@ function rBeranda(mm){
   const cur=mm.cur,T=mm.T,P=posAktif();let h="";
   const hariKe=+todayStr().slice(8,10),pctHari=hariKe/dim(cur)*100;
 
-  /* hero: pos mingguan */
-  P.filter(p=>p.jenis==="MINGGUAN").forEach(p=>{
-    const g=mingguan(mm,p,cur);
-    const pk=Math.max(0,Math.min(100,g.sp[g.w]/Math.max(1,g.jt[g.w])*100));
-    h+=`<div class="hero">
-      <div class="cap"><span>${esc(p.nama)} · minggu ${g.w}</span><span>${wRange(g.w,cur)} ${BLS[+cur.slice(5)-1]}</span></div>
-      <div class="lbl">${g.sisaMg<0?"Lebih dari jatah minggu ini":"Sisa jatah minggu ini"}</div>
-      <div class="big ${g.sisaMg<0?"neg":""}">${rp(g.sisaMg)}</div>
-      <div class="sub">jatah ${num(g.jt[g.w])} · terpakai ${num(g.sp[g.w])}</div>
-      <div class="bar"><i style="width:${pk}%;${g.sisaMg<0?"background:#F3A7B0":""}"></i></div>
-      <div class="weeks">${[1,2,3,4].map(k=>{
-        const past=k<g.w,now=k===g.w,fut=k>g.w;
-        const over=!fut&&g.sp[k]>g.jt[k]+1;
-        return `<div class="wk ${now?"now":""} ${over?"over":""}"><div class="w">Mg ${k}</div>
-          <div class="s">${fut?"≈ "+kj(g.jt[k]):kj(g.sp[k])}</div>
-          <div class="j">${fut?"perkiraan":"dari "+kj(g.jt[k])}</div></div>`}).join("")}</div>
-      <div class="foot"><span>Sisa bulan ini<br><span style="opacity:.7;font-size:11.5px">anggaran ${kj(g.r.angg)}${g.r.bawa?` · bawaan ${g.r.bawa>0?"+":""}${kj(g.r.bawa)}`:""}</span></span><b>${rp(g.sisaBln)}</b></div>
-    </div>`;
-  });
+  /* 1. total seluruh uang + dompet */
+  const total=Object.values(mm.S).reduce((a,v)=>a+v,0);
+  const simpanTot=P.filter(p=>p.jenis==="SIMPAN").reduce((a,p)=>a+(mm.simpan[p.id]||0),0);
+  h+=`<div class="hero"><div class="cap"><span>Total uang</span><span>${tglPdk(todayStr())} ${cur.slice(0,4)}</span></div>
+    <div class="big ${total<0?"neg":""}" style="margin-top:10px">${rp(total)}</div>
+    <div class="sub">termasuk simpanan ${kj(simpanTot)} · bisa dipakai ${kj(total-simpanTot)}</div>
+    <div class="dlist">${dompetList().map(d=>{const v=mm.S[d]||0,pc=total>0?Math.max(0,v)/total*100:0;
+      return `<div class="drow"><span class="dn">${esc(d)}</span><span class="db"><i style="width:${pc}%"></i></span><span class="dv ${v<0?"neg":""}">${rp(v)}</span></div>`}).join("")}</div>
+  </div>`;
 
   /* peringatan */
   const al=[];
@@ -502,38 +560,56 @@ function rBeranda(mm){
   P.filter(p=>p.jenis==="PAGU").forEach(p=>{const r=mm.M[p.id][cur];if(r&&r.pakai>r.angg)al.push(["bad",`<b>${esc(p.nama)} lewat anggaran</b> ${rp(r.pakai-r.angg)}.`])});
   D.barang.forEach(b=>{const s=statBarang(b,T);if(s.next&&s.sisaHari<=2)al.push(["warn",`<b>${esc(b.nama)}</b> ${s.sisaHari<0?"seharusnya sudah habis":s.sisaHari===0?"kemungkinan habis hari ini":"kemungkinan habis dalam "+s.sisaHari+" hari"}.`])});
   if(Q.length+QD.length)al.push(["warn",`<b>${Q.length+QD.length} catatan belum terkirim.</b> Akan terkirim otomatis saat ada sinyal.`]);
+  if(total<0)al.push(["bad","<b>Total uang minus.</b> Cocokkan saldo di tab Bulanan."]);
   if(al.length)h+=`<div class="alerts">${al.map(([c,t])=>`<div class="al ${c}"><span class="dot"></span><span>${t}</span></div>`).join("")}</div>`;
 
-  /* pos pagu */
+  /* 2. makan — mingguan bergulir */
+  P.filter(p=>p.jenis==="MINGGUAN").forEach(p=>{
+    const g=mingguan(mm,p,cur);
+    const pk=Math.max(0,Math.min(100,g.sp[g.w]/Math.max(1,g.jt[g.w])*100));
+    h+=`<section><h2>${esc(p.nama)} · mingguan<span class="r">minggu ${g.w} · ${wRange(g.w,cur)} ${BLS[+cur.slice(5)-1]}</span></h2>
+      <div class="card mk">
+      <div class="lbl">${g.sisaMg<0?"Lebih dari jatah minggu ini":"Sisa jatah minggu ini"}</div>
+      <div class="bigl ${g.sisaMg<0?"neg":""}">${rp(g.sisaMg)}</div>
+      <div class="subl">jatah ${num(g.jt[g.w])} · terpakai ${num(g.sp[g.w])}</div>
+      <div class="lbar"><i class="${g.sisaMg<0?"bad":""}" style="width:${pk}%"></i></div>
+      <div class="weeks">${[1,2,3,4].map(k=>{
+        const now=k===g.w,fut=k>g.w,over=!fut&&g.sp[k]>g.jt[k]+1;
+        return `<div class="wk ${now?"now":""} ${over?"over":""}"><div class="w">Mg ${k}</div>
+          <div class="s">${fut?"≈ "+kj(g.jt[k]):kj(g.sp[k])}</div>
+          <div class="j">${fut?"perkiraan":"dari "+kj(g.jt[k])}</div></div>`}).join("")}</div>
+      <div class="foot"><span>Sisa bulan ini<br><small>anggaran ${kj(g.r.angg)}${g.r.bawa?` · bawaan ${g.r.bawa>0?"+":""}${kj(g.r.bawa)}`:""}</small></span><b>${rp(g.sisaBln)}</b></div>
+    </div></section>`;
+  });
+
+  /* 3. pos lain — harian bergulir */
   const pagu=P.filter(p=>p.jenis==="PAGU");
   if(pagu.length){
-    h+=`<section><h2>Anggaran bulan ini<span class="r">hari ${hariKe}/${dim(cur)}</span></h2><div class="card">`;
+    h+=`<section><h2>Jatah harian<span class="r">hari ${hariKe}/${dim(cur)}</span></h2><div class="card">`;
     pagu.forEach(p=>{
-      const r=mm.M[p.id][cur]||{angg:N(p.pagu),pakai:0},pc=r.angg?r.pakai/r.angg*100:0,s=r.angg-r.pakai;
+      const g=harian(mm,p,cur),r=g.r,pc=r.angg?r.pakai/r.angg*100:0,sb=r.angg-r.pakai;
       const cls=pc>100?"bad":pc>pctHari+15?"warn":"";
-      h+=`<div class="pos"><div class="top"><span class="nm">${esc(p.nama)}</span><span class="sisa ${s<0?"neg":""}">${s<0?"lebih ":"sisa "}${kj(Math.abs(s))}</span></div>
+      const trend=g.jatah<g.normal*0.85?`<span class="tag warn">di bawah normal ${kj(g.normal)}/hari</span>`:g.jatah>g.normal*1.15?`<span class="tag ok">longgar · normal ${kj(g.normal)}/hari</span>`:"";
+      h+=`<div class="pos"><div class="top"><span class="nm">${esc(p.nama)}</span><span class="sisa ${g.sisa<0?"neg":""}">${g.sisa<0?"lebih ":""}${kj(Math.abs(g.sisa))}<small> ${g.sisa<0?"hari ini":"sisa hari ini"}</small></span></div>
+        <div class="meta"><span>jatah hari ini ${num(g.jatah)} · terpakai ${num(g.today)}</span><span>${g.sisaHari>1?"besok ≈ "+kj(g.besok):"hari terakhir"}</span></div>
         <div class="pbar"><i class="${cls}" style="width:${Math.min(100,pc)}%"></i><span class="today" style="left:${pctHari}%"></span></div>
-        <div class="meta"><span>terpakai ${num(r.pakai)}</span><span>dari ${num(r.angg)}${r.tambah?" (+"+kj(r.tambah)+")":""}</span></div></div>`;
+        <div class="meta"><span>bulan ini ${num(r.pakai)} dari ${num(r.angg)}${r.tambah?" (+"+kj(r.tambah)+")":""}</span><span class="${sb<0?"negt":""}">${sb<0?"lebih ":"sisa "}${kj(Math.abs(sb))}</span></div>${trend}</div>`;
     });
-    const tv=tag.reduce((a,x)=>a+x.v,0),tl=tag.filter(x=>doneRows(T,x.ref,cur).length);
-    h+=`<div class="rowline linkish" onclick="go('bulanan')"><span class="l">Tagihan & transfer<small>${tl.length} dari ${tag.length} lunas · lihat daftar</small></span>
-      <span class="v">${kj(tl.reduce((a,x)=>a+doneRows(T,x.ref,cur).reduce((b,t)=>b+t.nominal,0),0))} / ${kj(tv)}</span></div>`;
     h+=`</div></section>`;
   }
 
-  /* dompet */
-  h+=`<section><h2>Saldo dompet<span class="r">total ${kj(Object.values(mm.S).reduce((a,v)=>a+v,0))}</span></h2><div class="grid2">`;
-  dompetList().forEach(d=>{const v=mm.S[d]||0;h+=`<div class="card dp"><div class="n">${esc(d)}</div><div class="v ${v<0?"neg":""}">${rp(v)}</div></div>`});
-  h+=`</div></section>`;
-
-  /* simpanan */
-  const sp=P.filter(p=>p.jenis==="SIMPAN");
-  h+=`<section><h2>Simpanan</h2><div class="card">`;
-  sp.forEach(p=>{h+=`<div class="rowline"><span class="l">${esc(p.nama)}<small>+${kj(N(p.pagu))} tiap bulan</small></span><span class="v">${rp(mm.simpan[p.id]||0)}</span></div>`});
+  /* 4. tagihan, cicilan, simpanan */
+  const tv=tag.reduce((a,x)=>a+x.v,0),tl=tag.filter(x=>doneRows(T,x.ref,cur).length);
+  const cic=P.filter(p=>p.cicilan&&aktifDi(p,cur));
+  h+=`<section><h2>Tagihan & simpanan</h2><div class="card">
+    <div class="rowline linkish" onclick="go('bulanan')"><span class="l">Tagihan & transfer<small>${tl.length} dari ${tag.length} lunas · lihat daftar</small></span>
+      <span class="v">${kj(tl.reduce((a,x)=>a+doneRows(T,x.ref,cur).reduce((b,t)=>b+t.nominal,0),0))} / ${kj(tv)}</span></div>`;
+  cic.forEach(p=>{h+=`<div class="rowline"><span class="l">${esc(p.nama)}<small>cicilan ${kj(N(p.pagu))}/bln${p.tenor?" · lunas "+blnNama(akhirCic(p)):""}</small></span><span class="v">${doneRows(T,"TAG:"+p.id,cur).length?"✓ lunas":"belum"}</span></div>`});
+  P.filter(p=>p.jenis==="SIMPAN").forEach(p=>{h+=`<div class="rowline"><span class="l">${esc(p.nama)}<small>+${kj(N(p.pagu))} tiap bulan</small></span><span class="v">${rp(mm.simpan[p.id]||0)}</span></div>`});
   h+=`<div class="rowline linkish" onclick="go('bulanan')"><span class="l">Uang sisa<small>sisa pos bulan lalu, siap dibagikan</small></span><span class="v" style="color:${mm.pot<0?"var(--bad)":"var(--acc)"}">${rp(mm.pot)}</span></div>`;
   h+=`</div></section>`;
 
-  /* barang */
+  /* 5. barang */
   if(D.barang.length){
     h+=`<section><h2>Barang pokok</h2><div class="card">`;
     D.barang.forEach(b=>{
@@ -617,7 +693,8 @@ function rBulanan(mm){
   const bagi=daftarBagi(ym),tag=daftarTagihan(ym);
   const nb=bagi.filter(x=>doneRows(T,x.ref,ym).length).length,nt=tag.filter(x=>doneRows(T,x.ref,ym).length).length;
   h+=`<section><h2>Pembagian awal bulan<span class="r">${nb}/${bagi.length}</span></h2><div class="card">${bagi.map(x=>ckRow(x,"bagi")).join("")}</div></section>`;
-  h+=`<section><h2>Tagihan & transfer<span class="r">${nt}/${tag.length}</span></h2><div class="card">${tag.map(x=>ckRow(x,"tag")).join("")}</div></section>`;
+  h+=`<section><h2>Tagihan & cicilan<span class="r">${nt}/${tag.length}</span></h2><div class="card">${tag.map(x=>ckRow(x,"tag")).join("")}</div>
+    <button class="btn ghost" style="margin-top:10px" onclick="bukaCicilan()">+ Tambah cicilan baru</button></section>`;
 
   h+=`<section><h2>Uang sisa</h2><div class="card pad">
     <div class="mono" style="font-size:26px;font-weight:600;color:${mm.pot<0?"var(--bad)":"var(--ink)"}">${rp(mm.pot)}</div>
@@ -627,6 +704,45 @@ function rBulanan(mm){
   h+=`<section><h2>Cocokkan saldo</h2><div class="card">${dompetList().map(d=>`<div class="rowline linkish" onclick="bukaCocok('${d}')"><span class="l">${esc(d)}<small>ketuk untuk cocokkan</small></span><span class="v">${rp(mm.S[d]||0)}</span></div>`).join("")}</div>
     <div class="hint">Lakukan seminggu sekali: buka m-banking, lalu masukkan saldo aslinya. Pertama kali dipakai, ini sekaligus mengisi saldo awal.</div></section>`;
   document.getElementById("pg-bulanan").innerHTML=h;
+}
+
+/* ---------- tambah cicilan baru ---------- */
+let CC={};
+function bukaCicilan(){
+  const dl=dompetList();CC={dompet:dl[0],mulai:nowYM(),dana1:"SETORAN"};
+  openSheet(`<h3>Cicilan baru</h3><div class="sub">Masuk ke daftar tagihan tiap bulan sampai lunas.</div>
+    <div class="fld"><label for="ccnama">Nama cicilan</label><input id="ccnama" class="txt" placeholder="misal: Cicilan HP, Kredivo"></div>
+    <div class="row2"><div class="fld"><label for="ccnom">Per bulan</label><div class="nom" style="padding:10px 12px"><span style="font-size:14px">Rp</span><input id="ccnom" inputmode="numeric" placeholder="0" oninput="fmtNom(this);ccInfo()" style="font-size:20px"></div></div>
+      <div class="fld"><label for="cctenor">Berapa bulan</label><input id="cctenor" class="txt" inputmode="numeric" placeholder="misal 6" oninput="ccInfo()"></div></div>
+    <div class="fld"><span class="fl">Dibayar dari</span><div class="chips" id="ccdp">${dl.map((d,i)=>`<button class="chip ${i?"":"on"}" onclick="CC.dompet='${d}';ccPick('ccdp',this)">${esc(d)}</button>`).join("")}</div></div>
+    <div class="fld"><span class="fl">Mulai</span><div class="chips" id="ccm"><button class="chip on" onclick="CC.mulai=nowYM();ccPick('ccm',this);ccInfo()">${blnNama(nowYM())}</button><button class="chip" onclick="CC.mulai=addM(nowYM(),1);ccPick('ccm',this);ccInfo()">${blnNama(addM(nowYM(),1))}</button></div></div>
+    <div class="fld" id="ccdanaw"><span class="fl">Uang untuk bulan ini dari</span><div class="chips" id="ccd">
+      <button class="chip on" onclick="CC.dana1='SETORAN';ccPick('ccd',this);ccInfo()">Tambahan setoran suami</button>
+      <button class="chip" onclick="CC.dana1='CADANGAN';ccPick('ccd',this);ccInfo()">Cadangan</button>
+      <button class="chip" onclick="CC.dana1='SISA';ccPick('ccd',this);ccInfo()">Uang sisa</button></div></div>
+    <div class="al info" style="margin-top:14px" id="ccinfo"></div>
+    <button class="btn" onclick="simpanCicilan()">Simpan cicilan</button>`);
+  ccInfo();
+}
+function ccPick(id,el){document.querySelectorAll("#"+id+" .chip").forEach(c=>c.classList.remove("on"));el.classList.add("on")}
+function ccInfo(){
+  const v=digits((document.getElementById("ccnom")||{}).value||""),n=N((document.getElementById("cctenor")||{}).value);
+  const w=document.getElementById("ccdanaw");if(w)w.hidden=CC.mulai!==nowYM();
+  const base=posAktif().reduce((a,p)=>a+paguIn(p,addM(CC.mulai,CC.mulai===nowYM()?1:0)),0);
+  let t=`Setoran bulanan naik jadi <b>${rp(base+v)}</b> mulai ${blnNama(CC.mulai===nowYM()?addM(CC.mulai,1):CC.mulai)}.`;
+  if(n)t+=` Lunas ${blnNama(addM(CC.mulai,n-1))}.`;
+  if(CC.mulai===nowYM())t+=CC.dana1==="SETORAN"?` Bulan ini muncul centang <b>Tambahan setoran</b> ${kj(v)} di Pembagian awal bulan.`
+    :CC.dana1==="CADANGAN"?` Bulan ini dibayar dari Cadangan (saldo Cadangan berkurang ${kj(v)}).`:` Bulan ini diambil dari Uang sisa ${kj(v)}.`;
+  const el=document.getElementById("ccinfo");if(el)el.innerHTML=`<span>${t}</span>`;
+}
+function simpanCicilan(){
+  const nama=document.getElementById("ccnama").value.trim(),v=digits(document.getElementById("ccnom").value),n=N(document.getElementById("cctenor").value);
+  if(!nama)return toast("Isi nama cicilan");if(!v)return toast("Isi nominal per bulan");if(!n)return toast("Isi berapa bulan");
+  const dana1=CC.mulai===nowYM()?CC.dana1:"";
+  if(dana1==="SISA"&&model().pot<v)return toast("Uang sisa tidak cukup");
+  const id=uid(),rows=[{id,jenis:"CICILAN",ket:nama,nominal:v,dompet:CC.dompet,qty:n,bulan:CC.mulai,ref:dana1}];
+  if(dana1==="SISA")rows.push({jenis:"ALOKASI",pos:"c_"+id,nominal:v,ket:"Uang sisa untuk "+nama,bulan:CC.mulai});
+  addRows(rows);closeSheet();toast("Cicilan ditambahkan ✓");
 }
 function bukaCk(kind,ref){
   const ym=BM,T=trxAll(),list=kind==="bagi"?daftarBagi(ym):daftarTagihan(ym),x=list.find(i=>i.ref===ref);if(!x)return;
@@ -705,6 +821,7 @@ function descTrx(t){
   if(t.jenis==="PINDAH")return{d:t.ket||"Pindah dana",c:t.dompet+" → "+t.ke,cls:"mv",sign:"⇄ "};
   if(t.jenis==="SESUAI")return{d:t.ket||"Penyesuaian saldo",c:"Penyesuaian · "+t.dompet,cls:t.nominal<0?"out":"in",sign:t.nominal<0?"−":"+"};
   if(t.jenis==="ALOKASI")return{d:"Uang sisa → "+(p?p.nama:""),c:"Alokasi",cls:"mv",sign:"↦ "};
+  if(t.jenis==="CICILAN")return{d:"Cicilan baru: "+(t.ket||""),c:`${t.qty||"?"} bulan · mulai ${blnNama(t.bulan)} · ${t.dompet}`,cls:"mv",sign:"/bln "};
   return{d:t.ket||t.jenis,c:t.jenis,cls:"mv",sign:""};
 }
 function bukaTx(id){
