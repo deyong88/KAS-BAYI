@@ -249,6 +249,19 @@ nav button.plus.on .pl{background:var(--ink)}
 .pos .sisa small{font-family:var(--body);font-weight:400;font-size:11px;color:var(--ink2)}
 .negt{color:var(--bad)}
 .pos .meta+.pbar{margin-top:8px}
+
+/* umpan balik tombol: tertekan → memproses → berhasil */
+button{touch-action:manipulation}
+.btn,.chip,.bq button,.seg button,.qty button,.mnav button,nav button{transition:transform .09s ease,background-color .2s,opacity .2s,filter .09s}
+.btn:active,.chip:active,.bq button:active,.qty button:active,.mnav button:active,.seg button:active{transform:scale(.96)}
+.btn:active{filter:brightness(.9)}
+nav button:active{transform:scale(.9)}
+.ck:active,.linkish:active,.tx:active{background:#F1ECE3}
+.btn.busy{pointer-events:none;opacity:.8}
+.btn.busy::before{content:"";display:inline-block;width:15px;height:15px;margin-right:9px;vertical-align:-2px;
+  border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:spin .7s linear infinite}
+.btn.ok{background:var(--ok)!important;color:#fff!important;border-color:var(--ok)!important;pointer-events:none}
+@keyframes spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
@@ -341,7 +354,7 @@ async function api(body){
 
 async function refresh(manual){
   if(DEMO){ if(manual) toast("Mode contoh — tidak ada Sheet"); return; }
-  setSync("wait","memuat…");
+  setSync("wait",Q.length||QD.length?"mengirim…":"memuat…");
   try{
     let j;
     if(Q.length||QD.length){
@@ -367,7 +380,11 @@ function setSync(s,txt){
     "tersinkron "+(SYNC.t?pad(SYNC.t.getHours())+":"+pad(SYNC.t.getMinutes()):"");
 }
 
+let LASTADD={sig:"",t:0};
 function addRows(rows){
+  const sig=rows.map(r=>[r.jenis,r.pos,r.nominal,r.dompet,r.ke,r.tanggal||todayStr(),r.barang,r.bulan].join("|")).join(";");
+  if(sig===LASTADD.sig&&Date.now()-LASTADD.t<8000){toast("Sudah tersimpan — tidak dicatat dua kali");return false}
+  LASTADD={sig,t:Date.now()};
   rows=rows.map(r=>({id:uid(),waktu:new Date().toISOString(),tanggal:todayStr(),bulan:"",jenis:"KELUAR",pos:"",nominal:0,
     dompet:"",ke:"",barang:"",qty:"",ket:"",ref:"",hapus:0,...r})).map(r=>{const m=mulaiYM();let b=r.bulan||ymOf(r.tanggal);if(m&&b<m)b=m;return{...r,bulan:b}});
   if(DEMO){D.trx.push(...rows);render();return}
@@ -674,7 +691,7 @@ function rCatat(){
   if(C.mode==="PINDAH")h+=`<div class="fld"><span class="fl">Ke</span><div class="chips">${dl.filter(d=>d!==C.dompet).map(d=>`<button class="chip ${C.ke===d?"on":""}" onclick="keep();C.ke='${d}';render()">${esc(d)}</button>`).join("")}</div></div>`;
   h+=`<div class="row2"><div class="fld"><label for="tgl">Tanggal</label><input id="tgl" class="txt" type="date" value="${C.tgl||todayStr()}" onchange="keep()"></div>
     <div class="fld"><label for="ket">Keterangan</label><input id="ket" class="txt" placeholder="opsional" value="${esc(C.ket)}" oninput="keep()"></div></div>`;
-  h+=`<button class="btn" onclick="simpan()">Simpan</button></section>`;
+  h+=`<button class="btn ${SV==="busy"?"busy":SV==="ok"?"ok":""}" onclick="simpan()">${SV==="busy"?"Menyimpan…":SV==="ok"?"Tersimpan ✓":"Simpan"}</button></section>`;
   document.getElementById("pg-catat").innerHTML=h;
 }
 function keep(){const n=document.getElementById("nom"),k=document.getElementById("ket"),t=document.getElementById("tgl");if(n)C.nom=n.value;if(k)C.ket=k.value;if(t)C.tgl=t.value}
@@ -686,7 +703,9 @@ function pilihTag(id){
   render();
 }
 function pilihBarang(id){keep();if(C.barang===id){C.barang=null;C.pos=null}else{const b=D.barang.find(x=>x.id===id);C.barang=id;C.pos=b.pos;C.qty=1;C.dompet=lastDompet(b.pos)||C.dompet}render()}
+let SV="idle";   /* idle → busy (spinner) → ok (hijau) → idle */
 function simpan(){
+  if(SV!=="idle")return;
   keep();const v=digits(C.nom),tgl=C.tgl||todayStr();
   if(!v)return toast("Isi nominal dulu");
   if(!C.dompet)return toast("Pilih dompet");
@@ -705,8 +724,17 @@ function simpan(){
   }
   if(C.mode==="MASUK"&&C.setor){rows[0].ref="SETORAN";rows[0].bulan=C.untuk||aktifYM();if(!rows[0].ket)rows[0].ket="Setoran bulanan"}
   if(C.mode==="PINDAH"){if(!C.ke)return toast("Pilih dompet tujuan");rows[0].ke=C.ke}
-  addRows(rows);resetC();toast("Tersimpan ✓");
+  SV="busy";render();
+  setTimeout(()=>{
+    const ok=addRows(rows)!==false;
+    if(ok)resetC();
+    SV=ok?"ok":"idle";render();
+    setTimeout(()=>{SV="idle";if(PAGE==="catat")render()},1100);
+  },300);
 }
+/* tombol di lembar bawah: spinner + kunci sebentar supaya tidak terketuk dua kali */
+function tap(el){if(el.dataset.lock)return false;el.dataset.lock="1";el.classList.add("busy");
+  setTimeout(()=>{el.classList.remove("busy");delete el.dataset.lock},900);return true}
 /* ============================ RINGKASAN ============================ */
 let BM=null;
 function dompetBulan(T,ym){
@@ -774,7 +802,7 @@ function bukaPagu(){
     <div class="al info" style="margin-top:12px" id="pginfo"></div>
     <div class="fld"><label for="pgnom">Pagu baru per bulan</label><div class="nom"><span>Rp</span><input id="pgnom" inputmode="numeric" placeholder="0" oninput="fmtNom(this);pgInfo()"></div></div>
     <div class="fld"><span class="fl">Berlaku mulai</span><div class="chips" id="pgm">${[ym,addM(ym,1)].map(m=>`<button class="chip ${m===PG.mulai?"on":""}" onclick="PG.mulai='${m}';ccPick('pgm',this);pgInfo()">${blnNama(m)}</button>`).join("")}</div></div>
-    <button class="btn" onclick="simpanPagu()">Simpan anggaran</button>`);
+    <button class="btn" onclick="tap(this)&&simpanPagu()">Simpan anggaran</button>`);
   pgInfo();
 }
 function pgInfo(){
@@ -800,7 +828,7 @@ function bukaCicilan(){
     <div class="fld"><span class="fl">Biasanya dibayar dari</span><div class="chips" id="ccdp">${dl.map((d,i)=>`<button class="chip ${i?"":"on"}" onclick="CC.dompet='${d}';ccPick('ccdp',this)">${esc(d)}</button>`).join("")}</div></div>
     <div class="fld"><span class="fl">Mulai</span><div class="chips" id="ccm">${[ym,addM(ym,1)].map((m,i)=>`<button class="chip ${i?"":"on"}" onclick="CC.mulai='${m}';ccPick('ccm',this);ccInfo()">${blnNama(m)}</button>`).join("")}</div></div>
     <div class="al info" style="margin-top:14px" id="ccinfo"></div>
-    <button class="btn" onclick="simpanCicilan()">Simpan cicilan</button>`);
+    <button class="btn" onclick="tap(this)&&simpanCicilan()">Simpan cicilan</button>`);
   ccInfo();
 }
 function ccInfo(){
@@ -823,7 +851,7 @@ function bukaAlokasi(){
     <div class="fld"><label for="alnom">Nominal</label><div class="nom"><span>Rp</span><input id="alnom" inputmode="numeric" value="${num(mm.pot)}" oninput="fmtNom(this)"></div></div>
     <div class="fld"><span class="fl">Ke</span><div class="chips" id="alch">${tuj.map((p,i)=>`<button class="chip ${i?"":"on"}" onclick="window._al='${p.id}';document.querySelectorAll('#alch .chip').forEach(c=>c.classList.remove('on'));this.classList.add('on')">${esc(p.nama)}</button>`).join("")}</div>
     <div class="hint">Ke Cadangan atau Tabungan: masuk simpanan. Ke pos lain: menambah anggaran pos itu bulan ini.</div></div>
-    <button class="btn acc" onclick="simpanAlokasi()">Bagikan</button>`);
+    <button class="btn acc" onclick="tap(this)&&simpanAlokasi()">Bagikan</button>`);
 }
 function simpanAlokasi(){
   const v=digits(document.getElementById("alnom").value);if(!v)return toast("Isi nominal");
@@ -834,7 +862,7 @@ function bukaCocok(d){
   openSheet(`<h3>Cocokkan ${esc(d)}</h3><div class="sub">Saldo menurut app: ${rp(v)}</div>
     <div class="fld"><label for="cknyata">Saldo asli di ${esc(d)}</label><div class="nom"><span>Rp</span><input id="cknyata" inputmode="numeric" placeholder="0" oninput="fmtNom(this)"></div>
     <div class="hint">Selisihnya dicatat sebagai penyesuaian. Tidak mengubah anggaran pos mana pun.</div></div>
-    <button class="btn" onclick="simpanCocok('${d}',${v})">Simpan</button>`);
+    <button class="btn" onclick="tap(this)&&simpanCocok('${d}',${v})">Simpan</button>`);
 }
 function simpanCocok(d,v){
   const el=document.getElementById("cknyata");if(!el.value.trim())return toast("Isi saldo asli");
@@ -925,6 +953,7 @@ function start(){
   document.getElementById("gate").hidden=true;document.getElementById("app").hidden=false;document.getElementById("nav").hidden=false;
   render();refresh();
 }
+document.addEventListener("touchstart",()=>{},{passive:true});
 window.addEventListener("online",()=>refresh());
 document.addEventListener("visibilitychange",()=>{if(!document.hidden&&D&&!DEMO)refresh()});
 setInterval(()=>{if(!DEMO&&(Q.length||QD.length))refresh()},30000);
